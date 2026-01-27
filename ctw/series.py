@@ -3,8 +3,10 @@ import numpy as np
 
 class AR :  
     """
-    AutoRegressive model
-
+    AutoRegressive model.
+    Example of usage :
+    model = AR(p=2, coeffs=[0.5, -0.3], sigma=1, n_sample=100)
+    x = [value for value in model] ## Creates a 100 samples sequence.
     Attributes:
         p (int): order of the model
     """
