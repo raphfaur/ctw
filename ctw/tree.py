@@ -116,7 +116,7 @@ def print_tree(tree: Tree):
 
 
 from graphviz import Digraph
-def __visualize_tree(node, dot=None, node_id=0):
+def __visualize_tree_debug(node, dot=None, node_id=0):
     if dot is None:
         dot = Digraph(comment='Tree')
 
@@ -128,16 +128,55 @@ def __visualize_tree(node, dot=None, node_id=0):
     dot.node(current_id, label)
     
     next_id = node_id + 1
-    if node.is_leaf() is not False:
+    if node.data['leaf_cbct'] is True:
         return dot, next_id
+    for child in node.children:
+        child_id = str(next_id)
+        dot.edge(current_id, child_id)
+        dot, next_id = __visualize_tree_debug(child, dot, next_id)
+        
+    return dot, next_id
+
+
+def __visualize_tree(node, dot=None, node_id=0):
+    """
+    Vizualise contextx and AR parameters (ms and variance) in each node of the tree.
+    """
+    if dot is None:
+        dot = Digraph(comment='Tree')
+
+    label = f"Ctx: {node.context}\n"
+    if 'ms' in node.data:
+        label += "AR coefficients : " + ", ".join([f"{m:.2f}" for m in list(node.data['ms'].flatten())]) + "\n"
+    if 'var' in node.data:
+        label += f"σ : {float(node.data['var']**0.5):.2f}\n"
+    if 'BS_len' in node.data:
+        label += f"Observed samples : {node.data['BS_len']}\n"
+    current_id = str(node_id)
+    dot.node(current_id, label)
+    
+    next_id = node_id + 1
+    if node.data['leaf_cbct'] is True:
+        return dot, next_id
+    
     for child in node.children:
         child_id = str(next_id)
         dot.edge(current_id, child_id)
         dot, next_id = __visualize_tree(child, dot, next_id)
         
     return dot, next_id
+    
+
+def view_tree_debug(tree: Tree):
+    dot, _ = __visualize_tree_debug(tree.root)
+    # dot.view()
+    return dot
 
 def view_tree(tree: Tree):
     dot, _ = __visualize_tree(tree.root)
-    dot.view()
+    # dot.view()
     return dot
+
+
+
+

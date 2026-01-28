@@ -22,337 +22,29 @@ class Quantizer :
         return self._thresholds[index]
 
 
-class ARTree :
-    """
-    The ARTree class implements a Context Tree Weighting model for AutoRegressive processes.
-    It :
-    - builds a context tree from a sequence of observations.
-    - runs CTW and CBCT algorithms on the tree. (pruning as needed)
-    - computes MAP estimates of the AR parameters and noise variance for each node in the tree.
-    Note that this version of the model takes a full sequence of observation, hence making it impossible
-    to incrementally update the model with new observations.
-    """
-    def __init__(self, max_depth : int, quantizer : Quantizer = Quantizer(), order = 1) -> None :
-        ## Prior hyperparameters for the AR model
-
-        ## Order of the AR model 
-        self.order = order
-
-        ## Inv gamma for the noise variance
-        self._tau = 1.0
-        self._lambda = 0.1
-
-        ## Gaussian for the AR parameters (p parameter)
-        self._mu_0 = np.zeros((order, 1))
-        self._Sigma_0 = np.diag(np.ones(order))
-
-        ## Hyperparameters of the tree
-        ## Besta must be > 1/2 according to the paper (higher beta means smaller tree prior)
-        self.beta = 0.51
-        self.max_depth = max_depth
-
-        ## Tree
-        self.tree = None
-        self.alphabet = quantizer.get_alphabet()
-
-        self.quantizer = quantizer
-
-    def _init_tree(self, node : TreeNode) -> None :
-        node.data = {
-            'children_activated' : True,
-        }
-        for child in node.children :
-            self._init_tree(child)
-    
-    def build_from_string(self, x : list) :
-        """
-        Given a sequence x, build the context tree up to max_depth.
-        
-        :param x: A sequence.
-        :type x: list
-        """
-        quantized_x = [self.quantizer.quantize(xi) for xi in x]
-        self.tree = Tree.build_from_string(quantized_x, self.max_depth, self.alphabet)
-        self._init_tree(self.tree.root)
-
-    def _B_s(self, leaf : TreeNode, x : list) -> float :
-        """
-        Given a leaf node and a sequence x, compute the set B_s.
-    
-        """
-        ## Need to reverse the context to match the sequence order
-        context = leaf.context[::-1]
-        k = len(context)
-        BS = set()
-        for i in range(len(x)) :
-            if x[i - k + 1: i + 1] == context :
-                BS.add(i)
-        return BS
-
-    def _log_S_e(self, leaf : Tree, x : list) -> float :
-        """
-        Compute log(P_e) for a given leaf and a sequence x. We use log to avoid numerical issues.
-        
-        :param leaf: The node of the tree at which to compute P_e.
-        :type leaf: Tree
-        :param x: The sequence of observations.
-        :type x: list
-        :return: The logarithm of the probability P_e.
-        :rtype: float
-        """
-        BS = self._B_s(leaf, [self.quantizer.quantize(xi) for xi in x])
-        n = len(BS)
-
-        # S1 is a scalar
-        s1 = sum(x[i] ** 2 for i in BS)
-
-        # s2 is a vector
-        s2 = np.zeros((self.order, 1))
-        for i in BS :
-            x_i_tilde = np.array([x[i - j - 1] for j in range(self.order)]).reshape(1, self.order)
-            s2 += x[i] * x_i_tilde.T
-        
-        # S3 is a matrix
-        S3 = np.zeros((self.order, self.order))
-        for i in BS :
-            x_i_tilde = np.array([x[i - j - 1] for j in range(self.order)])
-            S3 += np.outer(x_i_tilde, x_i_tilde)
-
-
-        a = (np.linalg.inv(self._Sigma_0) @ self._mu_0)
-        b = np.linalg.inv(S3 + np.linalg.inv(self._Sigma_0))
-        D_s = s1 + self._mu_0.T @ np.linalg.inv(self._Sigma_0) @ self._mu_0 - a.T @ b @ a
-
-
-        Lambda_0 = np.linalg.inv(self._Sigma_0)
-        Lambda_n = S3 + Lambda_0
-        
-        # Get log det
-        _, log_det_Sigma0 = np.linalg.slogdet(self._Sigma_0)
-        _, log_det_LambdaN = np.linalg.slogdet(Lambda_n)
-
-        # log(C_s)
-        log_Cs = 1/2 * ( (n * np.log(2 * np.pi)) + log_det_Sigma0 + log_det_LambdaN)
-
-        # log of the ratio
-        gamma_term = gammaln(self._tau + n/2) - gammaln(self._tau)
-        lambda_term = (self._tau * np.log(self._lambda)) - ((self._tau + n/2) * np.log(self._lambda + D_s/2))
-
-        # 1/Cs * gamma_term * lambda_term
-        log_Pe = -log_Cs + gamma_term + lambda_term
-
-        # save data in node for further computations
-        leaf.data['log_Pe'] = log_Pe
-        leaf.data['s1'], leaf.data['s2'], leaf.data['S3'] = s1, s2, S3
-        leaf.data['D_s'] = D_s
-        leaf.data['BS'] = BS
-        
-        return log_Pe
-
-    def _compute_ms(self, node : TreeNode) -> None :
-        """
-        Compute ms given the data stored in the node. (ms is the MAP estimate of the AR parameters)
-
-        :param node: The node at which to compute ms.
-        :type node: TreeNode
-        """
-        s3 = node.data['S3']
-        s2 = node.data['s2']
-        ms = np.linalg.inv(s3 + np.linalg.inv(self._Sigma_0)) @ (s2 + np.linalg.inv(self._Sigma_0) @ self._mu_0)
-        node.data['ms'] = ms
-    
-    def _compute_var(self, node : TreeNode) -> None :
-        """
-        Compute variance given the data stored in the node. (var is the MAP estimate of the noise variance)
-        
-        :param node: The node at which to compute variance.
-        :type node: TreeNode
-        """
-        D_s = node.data['D_s']
-        BS = node.data['BS']
-
-        var = (2 * self._lambda + D_s) / (2 * self._tau + len(BS) + 2)
-        node.data['var'] = var
-
-    def _log_cctw(self, node : TreeNode, x : list) -> float :
-        """
-        Comppute log(P_w,s) for a given node and a sequence x.
-        
-        :param node: The node of the tree at which to compute P_w,s.
-        :type node: TreeNode
-        :param x: The sequence of observations.
-        :type x: list
-        :return: The logarithm of the probability P_w,s for this node.
-        :rtype: float
-        """
-        if node.is_leaf() :
-            log_pws = self._log_S_e(node, x)
-            node.data['log_P_w,s'] = log_pws
-            return log_pws
-        else :
-            sum_log_children = 0.0
-            for child in node.children :
-                sum_log_children += self._log_cctw(child, x)
-            log_pws = np.logaddexp(np.log(self.beta) + self._log_S_e(node, x),
-                                   np.log(1 - self.beta) + sum_log_children)
-            node.data['log_P_w,s'] = log_pws
-            return log_pws
-        
-    def cctw(self, node : TreeNode, x : list) -> float :
-        """
-        Recursive computes P_w,s starting from a given node and a sequence x.
-        
-        :param node: The starting node (usually the root).
-        :type node: TreeNode
-        :param x: The sequence of observations.
-        :type x: list
-        :return: The probability P_w,s at the given root node. 
-        :rtype: float
-        """
-        if node.is_leaf() :
-            pws = self.S_e(node, x)
-            node.data['P_w,s'] = pws
-            return pws
-        else :
-            prod_children = 1.0
-            for child in node.children :
-                prod_children *= self.cctw(child, x)
-            pws = self.beta * self.S_e(node, x) + (1 - self.beta) * prod_children
-            node.data['P_w,s'] = pws
-            return pws
-
-    def cbct(self, node : TreeNode, x : list, depth) -> float :
-        """
-        Runs the cbct algorithm starting from a given node. It will prune the tree as well.
-        
-        :param node: The node at which to run the cbct algorithm.
-        :type node: TreeNode
-        :param x: The sequence of observations.
-        :type x: list
-        :param depth: The current depth in the tree. (usually starts at 0)
-        :return: The probability computed by the cbct algorithm.
-        :rtype: float
-        """
-        if node.is_leaf() :
-            if depth == self.max_depth :
-                return self.S_e(node, x)
-            else:
-                return self.beta
-        else :
-            prod_children = 1.0
-            for child in node.children :
-                prod_children *= self.cbct(child, x, depth + 1)
-            a = self.beta * self.S_e(node, x)
-            b = (1 - self.beta) * prod_children
-
-            if a > b :
-                node.children = []
-                return a
-            else :
-                return b
-        
-    def _log_cbct(self, node : TreeNode, x : list, depth) -> float :
-        """
-        Computes log(P_m,s) for a given node and a sequence x, pruning the tree as needed.
-        
-        :param node: The node at which to compute log(P_m,s).
-        :type node: TreeNode
-        :param x: The sequence of observations.
-        :type x: list
-        :param depth: The current depth in the tree. (usually starts at 0)
-        :return: The logarithm of the probability computed by the cbct algorithm.
-        :rtype: float
-        """
-        if node.is_leaf() :
-            if depth == self.max_depth :
-                # print("max depth")
-                return self._log_S_e(node, x)
-            else:
-                # print("not max depth")
-                return np.log(self.beta)
-        else :
-            sum_log_children = 0.0
-            for child in node.children :
-                sum_log_children += self._log_cbct(child, x, depth + 1)
-            a = np.log(self.beta) + self._log_S_e(node, x)
-            b = np.log(1 - self.beta) + sum_log_children
-
-            if a > b :
-                node.children = []
-                return a
-            else :
-                return b
-            
-    def compute_bct(self, x : list) -> float :
-        """
-        Runs BCT algorithm on the tree.
-        
-        :param x: The sequence of observations.
-        :type x: list
-        :return: The logarithm of the probability computed by the BCT algorithm.
-        :rtype: float
-        """
-        return self._log_cbct(self.tree.root, x, 0)
-
-    def compute_ctw(self, x : list) -> float :
-        """
-        Runs CTW algorithm on the tree.
-        
-        :param x: The sequence of observations.
-        :type x: list
-        :return: The logarithm of the probability computed by the CTW algorithm.
-        :rtype: float
-        """
-        return self._log_cctw(self.tree.root, x)
-    
-    def _map_parameters(self, node : TreeNode) :
-        """
-        Computes ms and var for all nodes in the tree, once the tree has been built and CTW/CBCT has been run.
-
-        :param node: The root node to start the computation from.
-        :type node: TreeNode
-        """
-        if node.is_leaf() :
-            self._compute_ms(node)
-            self._compute_var(node)
-        else :
-            for c in node.children :
-                self._map_parameters(c)
-
-    def compute_map_parameters(self) -> float : 
-        """
-        Computes ms and var for all nodes in the tree, once the tree has been built and CTW/CBCT has been run.
-
-        :return: None
-        """
-        self._map_parameters(self.tree.root)
-
-
 class LiveARTree() :
     """
     The LiveARTree class implements an online Context Tree Weighting model for AutoRegressive processes.
     The main difference with ARTree is that this model can be updated incrementally with new observations.
     This versio is prefered and should give the same results as ARTree when fed the same sequence of observations.
     """
-    def __init__(self, max_depth : int, quantizer : Quantizer = Quantizer(), order = 1, init_sequence = None) -> None :
+    def __init__(self, max_depth : int, quantizer : Quantizer = Quantizer(), order = 1, init_sequence = None, tau = 1.0, lambda_ = 1.0, beta = 0.8) -> None :
         ## Prior hyperparameters for the AR model
 
         ## Order of the AR model 
         self.order = order
 
         ## Inv gamma for the noise variance
-        self._tau = 1.0
-        self._lambda = 1.0
-        # self._tau = 0.01     
-        # self._lambda = 0.0001
+        self._tau = tau
+        self._lambda = lambda_
 
         ## Gaussian for the AR parameters (p parameter)
         self._mu_0 = np.zeros((order, 1))
-        self._Sigma_0 = np.diag(np.ones(order) * 1000)
+        self._Sigma_0 = np.diag(np.ones(order))
 
         ## Hyperparameters of the tree
         ## Besta must be > 1/2 according to the paper
-        self.beta = 0.7
+        self.beta = beta
         self.max_depth = max_depth
 
         ## Tree
@@ -363,7 +55,7 @@ class LiveARTree() :
         self.quantizer = quantizer
 
         ## Save observations
-        self._x = init_sequence if init_sequence is not None else [0] * (self.max_depth + 1)
+        self._x = init_sequence if init_sequence is not None else []
 
     def _init_tree(self, node : TreeNode) -> None :
         node.data.update({
@@ -433,21 +125,23 @@ class LiveARTree() :
         self._compute_ms(node)
         self._compute_var(node)
 
-    def _update_tree_cbct(self, node : TreeNode, x_new : float, context : list, depth : int) -> None :
+    def _update_tree_cbct(self, node : TreeNode, x_new : float, context_to_navigate : list, depth : int) -> None :
         if node.data['leaf_ctw'] :
+            # print("leaf ctw, depth :", depth, node.context)
             if depth == self.max_depth :
+                # print(depth, node.context)
                 node.data['log_P_m,s'] = node.data['log_Pe']
             else:
                 node.data['log_P_m,s'] = np.log(self.beta)
         else :
             context_index = depth
-            context_value = self.quantizer.quantize(context[context_index])
+            context_value = context_to_navigate[context_index]
 
             old_child_Pms = 0.0
             for child in node.children :
                 if child.value == context_value :
                     old_child_Pms = child.data['log_P_m,s']
-                    self._update_tree_cbct(child, x_new, context, depth + 1)
+                    self._update_tree_cbct(child, x_new, context_to_navigate, depth + 1)
                     break
             
             sum_log_children = node.data['sum_log_P_m,s_children'] - old_child_Pms
@@ -522,11 +216,14 @@ class LiveARTree() :
 
     def observe(self, x_new : float) -> None :
         self._x.append(x_new)
+        if len(self._x) < self.max_depth + 1:
+            return
 
         if self.tree is None :
             self.tree = Tree.build_max_tree(self.max_depth, self.alphabet)
 
         context_to_navigate = [self.quantizer.quantize(v) for v in self._x[-self.max_depth-1:-1]][::-1]
+        # print(context_to_navigate)
         history = self._x[-self.order-1:-1][::-1]
         # print(history)
         self._update_tree(self.tree.root, x_new, history, context_to_navigate, 0)
