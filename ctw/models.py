@@ -254,19 +254,19 @@ class LiveARTree() :
     
     def predict_cctw(self, history: list) -> float:
         """
-        CCTW : renvoie l'espérance conditionnelle et non la prédiction MAP
+        CCTW : return the conditional expectancy and not the MAP (like predict)
         """
         if len(history) < self.order:
             raise ValueError("History length must be at least equal to the order of the AR model.")
 
-        # Même prétraitement que predict()
+
         history = history[::-1]
         context_to_navigate = [
             self.quantizer.quantize(v)
             for v in history[:self.max_depth]
         ][::-1]
 
-        # Parcours du chemin suffixe unique
+        # We navigate to the unique suffix
         node = self.tree.root
         depth = 0
         path_nodes = [node]
@@ -287,18 +287,17 @@ class LiveARTree() :
 
             depth += 1
 
-        # Poids CCTW
+        # Weights CCTW of each node in the path
         log_weights = np.array(
             [float(n.data['log_P_w,s']) for n in path_nodes],
             dtype=float
         )
 
-        # stabilité numérique
         log_weights -= np.max(log_weights)
         weights = np.exp(log_weights)
         weights /= np.sum(weights)
 
-        # Espérance conditionnelle = moyenne pondérée des AR locaux
+        # We return the conditional expectancy
         h = np.array(history[:self.order], dtype=float).reshape(self.order, 1)
 
         x_pred = 0.0
