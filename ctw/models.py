@@ -552,4 +552,63 @@ class LiveARTree() :
         ## Use the ar parameters stored in the node to make prediction
         mean = node.data['ms']
         x_new = float(mean.T @ np.array(history).reshape(self.order, 1))
+
         return x_new
+    
+    def predict_cctw(self, history: list) -> float:
+        """
+        CCTW : renvoie l'espérance conditionnelle et non la prédiction MAP
+        """
+        if len(history) < self.order:
+            raise ValueError("History length must be at least equal to the order of the AR model.")
+
+        # Même prétraitement que predict()
+        history = history[::-1]
+        context_to_navigate = [
+            self.quantizer.quantize(v)
+            for v in history[:self.max_depth]
+        ][::-1]
+
+        # Parcours du chemin suffixe unique
+        node = self.tree.root
+        depth = 0
+        path_nodes = [node]
+
+        while depth < self.max_depth:
+            context_value = context_to_navigate[depth]
+            found_child = False
+
+            for child in node.children:
+                if child.value == context_value:
+                    node = child
+                    path_nodes.append(node)
+                    found_child = True
+                    break
+
+            if not found_child:
+                break
+
+            depth += 1
+
+        # Poids CCTW
+        log_weights = np.array(
+            [float(n.data['log_P_w,s']) for n in path_nodes],
+            dtype=float
+        )
+
+        # stabilité numérique
+        log_weights -= np.max(log_weights)
+        weights = np.exp(log_weights)
+        weights /= np.sum(weights)
+
+        # Espérance conditionnelle = moyenne pondérée des AR locaux
+        h = np.array(history[:self.order], dtype=float).reshape(self.order, 1)
+
+        x_pred = 0.0
+        for w, n in zip(weights, path_nodes):
+            ms = np.array(n.data['ms'], dtype=float)
+            mu = float(ms.T @ h)
+            x_pred += float(w) * mu
+
+        return float(x_pred)
+
