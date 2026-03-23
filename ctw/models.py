@@ -28,19 +28,20 @@ class LiveARTree() :
     The main difference with ARTree is that this model can be updated incrementally with new observations.
     This versio is prefered and should give the same results as ARTree when fed the same sequence of observations.
     """
-    def __init__(self, max_depth : int, quantizer : Quantizer = Quantizer(), order = 1, init_sequence = None, tau = 1.0, lambda_ = 1.0, beta = 0.8) -> None :
+    def __init__(self, max_depth : int, quantizer : Quantizer = Quantizer(), order = 1, constant_term = False, init_sequence = None, tau = 1.0, lambda_ = 1.0, beta = 0.8) -> None :
         ## Prior hyperparameters for the AR model
 
         ## Order of the AR model 
-        self.order = order
+        self.order = order + constant_term # Add one in case we want to use a constant term
+        self.constant_term = constant_term ## In case we have a constant term in the AR model
 
         ## Inv gamma for the noise variance
         self._tau = tau
         self._lambda = lambda_
 
         ## Gaussian for the AR parameters (p parameter)
-        self._mu_0 = np.zeros((order, 1))
-        self._Sigma_0 = np.diag(np.ones(order))
+        self._mu_0 = np.zeros((self.order, 1))
+        self._Sigma_0 = np.diag(np.ones(self.order))
 
         ## Hyperparameters of the tree
         ## Besta must be > 1/2 according to the paper
@@ -175,7 +176,7 @@ class LiveARTree() :
         # S3 is a matrix
         S3 = leaf.data['S3']
 
-        a = (np.linalg.inv(self._Sigma_0) @ self._mu_0)
+        a = (np.linalg.inv(self._Sigma_0) @ self._mu_0 + s2)
         b = np.linalg.inv(S3 + np.linalg.inv(self._Sigma_0))
         D_s = s1 + self._mu_0.T @ np.linalg.inv(self._Sigma_0) @ self._mu_0 - a.T @ b @ a
 
@@ -224,12 +225,12 @@ class LiveARTree() :
 
         context_to_navigate = [self.quantizer.quantize(v) for v in self._x[-self.max_depth-1:-1]][::-1]
         # print(context_to_navigate)
-        history = self._x[-self.order-1:-1][::-1]
+        history = self._x[-self.order:-1][::-1] + [1] if self.constant_term else self._x[-self.order-1:-1][::-1]
         # print(history)
         self._update_tree(self.tree.root, x_new, history, context_to_navigate, 0)
     
     def predict(self, history : list) -> dict :
-        if len(history) < self.order :
+        if len(history) < self.order - (1 if self.constant_term else 0) :
             raise ValueError("History length must be at least equal to the order of the AR model.")
         history = history[::-1]
         context_to_navigate = [self.quantizer.quantize(v) for v in history[:self.max_depth]][::-1]
@@ -247,6 +248,9 @@ class LiveARTree() :
                 break
             depth += 1
         ## Use the ar parameters stored in the node to make prediction
-        mean = node.data['ms']
-        x_new = float(mean.T @ np.array(history).reshape(self.order, 1))
+        mean = node.data['ms'].reshape(-1)
+        history = np.array(history[:self.order - (1 if self.constant_term else 0)]).reshape(-1)
+        if self.constant_term :
+            history = np.append(history, 1)
+        x_new = np.dot(mean, history.reshape(self.order))
         return x_new
