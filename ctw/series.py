@@ -11,9 +11,12 @@ class AR :
         p (int): order of the model
     """
     
-    def __init__(self, p : int, coeffs : list, sigma : float = 1, n_sample : int = 100, constant_term = 0) -> None :
+    def __init__(self, p : int, coeffs : list, sigma : float = 1, n_sample : int = 100, init_history = False) -> None :
         self.p = p
-        self._history = [0] * p
+        if init_history:
+            self._history = init_history
+        else:
+            self._history = [0] * p
         self.sigma = sigma
         self._n_sample = n_sample
         self.sample_k = 0
