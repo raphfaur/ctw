@@ -491,7 +491,7 @@ class BivariateARTree() :
         # Last observation is last in history = history is chronogicaly ordered
         if len(history) < self.order - (1 if self.constant_term else 0 ):
             raise ValueError("History length must be at least equal to the order of the AR model.")
-        history = history[::-1]
+        history = history[:, ::-1]
         bi_context = [history[:self.max_depth, k] for k in range(history.shape[1])]
         context_to_navigate = [self.quantizer.quantize(v) for v in bi_context][::-1]
         node = self.tree.root
@@ -509,7 +509,7 @@ class BivariateARTree() :
             depth += 1
         ## Use the ar parameters stored in the node to make prediction
         mean = node.data['ms'].reshape(-1)
-        history = np.array(history[:self.order - (1 if self.constant_term else 0)]).reshape(-1)
+        history = np.array(history[0, :self.order - (1 if self.constant_term else 0)]).reshape(-1)
         if self.constant_term :
             history = np.append(history, 1)
         x_new = np.dot(mean, history.reshape(self.order))
