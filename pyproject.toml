@@ -1,0 +1,14 @@
+[project]
+name = "ctw"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=2.4,<2.5",
+    "scipy>=1.17,<1.18",
+    "pandas>=2.3,<3.1",
+    "matplotlib>=3.9,<3.11",
+    "anytree>=2.13.0",
+    "graphviz==0.21",
+]

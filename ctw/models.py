@@ -12,14 +12,24 @@ class Quantizer :
     def quantize(self, value: float) -> int :
         for i, threshold in enumerate(self._thresholds) :
             if value < threshold :
-                break
-        return i
+                return i
+        return len(self._thresholds)
 
     def get_alphabet(self):
-        return range(len(self._thresholds))
+        return range(len(self._thresholds) + 1)
     
     def unquantize(self, index : int) -> float :
         return self._thresholds[index]
+    
+    def interval(self, index: int) -> tuple[float, float]:
+        """util for display"""
+        if index == 0:
+            return (-np.inf, self._thresholds[0])
+        elif index == len(self._thresholds):
+            return (self._thresholds[-1], np.inf)
+        else:
+            return (self._thresholds[index - 1], self._thresholds[index])
+        
 
 class BivariateQuantizer :
     """
@@ -37,6 +47,19 @@ class BivariateQuantizer :
         index = x + self.quantizer_sizes[0] * y
         return index
     
+    def decode(self, index: int) -> tuple[int, int]:
+        nx = self.quantizer_sizes[0]
+        x_idx = index % nx
+        y_idx = index // nx
+        return x_idx, y_idx
+
+    def decode_intervals(self, index: int):
+        x_idx, y_idx = self.decode(index)
+        x_int = self.quantizers[0].interval(x_idx)
+        y_int = self.quantizers[1].interval(y_idx)
+        return x_int, y_int
+
+
     def get_alphabet(self):
         return self.alphabet
 
@@ -198,6 +221,7 @@ class LiveARTree() :
         a = (np.linalg.inv(self._Sigma_0) @ self._mu_0 + s2)
         b = np.linalg.inv(S3 + np.linalg.inv(self._Sigma_0))
         D_s = s1 + self._mu_0.T @ np.linalg.inv(self._Sigma_0) @ self._mu_0 - a.T @ b @ a
+        D_s = float(D_s.squeeze())
 
         Lambda_0 = np.linalg.inv(self._Sigma_0)
         Lambda_n = S3 + Lambda_0
@@ -232,7 +256,7 @@ class LiveARTree() :
         D_s = node.data['D_s']
         BS_len = node.data['BS_len']
         var = (2 * self._lambda + D_s) / (2 * self._tau + BS_len + 2)
-        node.data['var'] = var
+        node.data['var'] = float(var)
 
     def observe(self, x_new : float) -> None :
         self._x.append(x_new)

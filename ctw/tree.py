@@ -1,5 +1,14 @@
+import numpy as np 
+
 def sublist(lst1, lst2):
     return all([(x in lst2) for x in lst1])
+
+def fmt_interval(interval):
+    a, b = interval
+    a_str = "-∞" if np.isneginf(a) else f"{a:.2f}"
+    b_str = "+∞" if np.isposinf(b) else f"{b:.2f}"
+    return f"[{a_str}, {b_str})"
+
 
 class TreeNode :
     def __init__(self, children : list = None):
@@ -138,18 +147,32 @@ def __visualize_tree_debug(node, dot=None, node_id=0):
     return dot, next_id
 
 
-def __visualize_tree(node, dot=None, node_id=0):
+def __visualize_tree(node, quantizer=None, dot=None, node_id=0):
     """
     Vizualise contextx and AR parameters (ms and variance) in each node of the tree.
     """
     if dot is None:
         dot = Digraph(comment='Tree')
 
-    label = f"Ctx: {node.context}\n"
+    # added context decoding 
+    if quantizer is not None and len(node.context) > 0:
+        decoded_ctx = []
+        for idx in node.context:
+            x_int, y_int = quantizer.decode_intervals(idx)
+            decoded_ctx.append(f"(x:{fmt_interval(x_int)}, y:{fmt_interval(y_int)})")
+        ctx_str = "\n".join(decoded_ctx)
+    else:
+        ctx_str = str(node.context)
+
+
+
+    label = f"Ctx:\n{ctx_str}\n"
+
     if 'ms' in node.data:
         label += "AR coefficients : " + ", ".join([f"{m:.2f}" for m in list(node.data['ms'].flatten())]) + "\n"
     if 'var' in node.data:
-        label += f"σ : {float(node.data['var']**0.5):.2f}\n"
+        var = float(np.asarray(node.data['var']).squeeze()) # fix bug of array dimensions 
+        label += f"σ : {var**0.5:.2f}\n"
     if 'BS_len' in node.data:
         label += f"Observed samples : {node.data['BS_len']}\n"
     current_id = str(node_id)
@@ -162,18 +185,19 @@ def __visualize_tree(node, dot=None, node_id=0):
     for child in node.children:
         child_id = str(next_id)
         dot.edge(current_id, child_id)
-        dot, next_id = __visualize_tree(child, dot, next_id)
+        dot, next_id = __visualize_tree(child, quantizer, dot, next_id)
         
     return dot, next_id
     
+
 
 def view_tree_debug(tree: Tree):
     dot, _ = __visualize_tree_debug(tree.root)
     # dot.view()
     return dot
 
-def view_tree(tree: Tree):
-    dot, _ = __visualize_tree(tree.root)
+def view_tree(tree: Tree, quantizer=None):
+    dot, _ = __visualize_tree(tree.root,quantizer=quantizer)
     # dot.view()
     return dot
 
