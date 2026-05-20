@@ -11,4 +11,9 @@ dependencies = [
     "matplotlib>=3.9,<3.11",
     "anytree>=2.13.0",
     "graphviz==0.21",
+    "requests>=2.33.1",
+    "ucimlrepo>=0.0.7",
+    "scip>=0.1.12",
+    "wfdb==4.3.1",
+    "tqdm>=4.67.3",
 ]

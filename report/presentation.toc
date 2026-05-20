@@ -1,0 +1,7 @@
+\beamer@sectionintoc {1}{Project Overview}{3}{0}{1}
+\beamer@sectionintoc {2}{BCT-AR: Algorithm Description}{4}{0}{2}
+\beamer@sectionintoc {3}{BCT-AR Univariate: Implementation}{10}{0}{3}
+\beamer@sectionintoc {4}{Univariate BCT-AR: Experiments}{13}{0}{4}
+\beamer@sectionintoc {5}{BCT-AR Bivariate: Algorithm Description}{21}{0}{5}
+\beamer@sectionintoc {6}{Bivariate BCT-AR: Experiments}{22}{0}{6}
+\beamer@sectionintoc {7}{Conclusion and Perspectives}{40}{0}{7}

@@ -91,7 +91,7 @@ class LiveARTree() :
 
         ## Gaussian for the AR parameters (p parameter)
         self._mu_0 = np.zeros((self.order, 1))
-        self._Sigma_0 = np.diag(np.ones(self.order))
+        self._Sigma_0 = np.diag(np.ones(self.order)*0.5)
 
         ## Hyperparameters of the tree
         ## Besta must be > 1/2 according to the paper
@@ -268,7 +268,9 @@ class LiveARTree() :
 
     def observe(self, x_new : float) -> None :
         self._x.append(x_new)
-        if len(self._x) < self.max_depth + 1:
+        required_history = self.order - (1 if self.constant_term else 0)
+        required_len = max(self.max_depth, required_history) + 1
+        if len(self._x) < required_len:
             return
 
         if self.tree is None :
@@ -281,10 +283,11 @@ class LiveARTree() :
         self._update_tree(self.tree.root, x_new, history, context_to_navigate, 0)
     
     def predict(self, history : list) -> dict :
-        if len(history) < self.order - (1 if self.constant_term else 0) :
+        required_history = self.order - (1 if self.constant_term else 0)
+        if len(history) < required_history :
             raise ValueError("History length must be at least equal to the order of the AR model.")
         history = history[::-1]
-        context_to_navigate = [self.quantizer.quantize(v) for v in history[:self.max_depth]][::-1]
+        context_to_navigate = [self.quantizer.quantize(v) for v in history[:self.max_depth]]
         node = self.tree.root
         depth = 0
         while not node.data['leaf_cbct'] and depth < self.max_depth :
@@ -300,7 +303,7 @@ class LiveARTree() :
             depth += 1
         ## Use the ar parameters stored in the node to make prediction
         mean = node.data['ms'].reshape(-1)
-        history = np.array(history[:self.order - (1 if self.constant_term else 0)]).reshape(-1)
+        history = np.array(history[:required_history]).reshape(-1)
         if self.constant_term :
             history = np.append(history, 1)
         x_new = np.dot(mean, history.reshape(self.order))
@@ -315,7 +318,7 @@ class BivariateARTree() :
     The main difference with ARTree is that this model can be updated incrementally with new observations.
     This versio is prefered and should give the same results as ARTree when fed the same sequence of observations.
     """
-    def __init__(self, max_depth : int, quantizer : Quantizer = Quantizer(), order = 1, constant_term = False, x_init_sequence = None, y_init_sequence = None, tau = 1.0, lambda_ = 1.0, beta = 0.8, y_depth = 1) -> None :
+    def __init__(self, max_depth : int, quantizer : Quantizer = Quantizer(), order = 1, constant_term = False, x_init_sequence = None, y_init_sequence = None, tau = 1.0, lambda_ = 1.0, beta = 0.8, y_depth = 1, sigma = 1.0) -> None :
         ## Prior hyperparameters for the AR model
 
         ## Order of the AR model 
@@ -328,7 +331,7 @@ class BivariateARTree() :
 
         ## Gaussian for the AR parameters (p parameter)
         self._mu_0 = np.zeros((self.order, 1))
-        self._Sigma_0 = np.diag(np.ones(self.order))
+        self._Sigma_0 = np.diag(np.ones(self.order) * 0.5)
 
         ## Hyperparameters of the tree
         ## Besta must be > 1/2 according to the paper
@@ -508,7 +511,10 @@ class BivariateARTree() :
 
         self._x.append(x_new)
         self._y.append(y_new)
-        if len(self._x) < self.max_depth + 1 or len(self._y) < self.max_depth + 1:
+        required_history = self.order - (1 if self.constant_term else 0)
+        required_x_len = max(self.max_depth, required_history) + 1
+        required_y_len = self.y_depth + 1
+        if len(self._x) < required_x_len or len(self._y) < required_y_len:
             return
 
         if self.tree is None :
@@ -527,33 +533,46 @@ class BivariateARTree() :
         # print(history)
         self._update_tree(self.tree.root, x_new, history, context_to_navigate, 0)
     
-    def predict(self, history : np.array) -> dict :
-        # Last observation is last in history = history is chronogicaly ordered
-        if history.shape[1] < self.order - (1 if self.constant_term else 0 ):
+    def predict(self, history: np.array) -> dict:
+        # history shape: (2, T), chronological order
+        required_history = self.order - (1 if self.constant_term else 0)
+        if history.shape[1] < required_history:
             raise ValueError("History length must be at least equal to the order of the AR model.")
+
         history = history[:, ::-1]
-        bi_context = [history[:self.max_depth, k] for k in range(history.shape[1])]
-        context_to_navigate = [self.quantizer.quantize(v) for v in bi_context][::-1]
+
+        # contexte pour naviguer dans l'arbre
+        n_ctx = min(self.max_depth, history.shape[1])
+        bi_context = [history[:, k] for k in range(n_ctx)]
+        context_to_navigate = [self.quantizer.quantize(v) for v in bi_context]
+
         node = self.tree.root
         depth = 0
-        while not node.data['leaf_cbct'] and depth < self.max_depth :
+        while not node.data['leaf_cbct'] and depth < self.max_depth:
             context_value = context_to_navigate[depth]
             found_child = False
-            for child in node.children :
-                if child.value == context_value :
+            for child in node.children:
+                if child.value == context_value:
                     node = child
                     found_child = True
                     break
-            if not found_child :
+            if not found_child:
                 break
             depth += 1
-        ## Use the ar parameters stored in the node to make prediction
+
+        # prédiction AR: on n'utilise que l'historique de x
         mean = node.data['ms'].reshape(-1)
-        history = np.array(history[:self.order - (1 if self.constant_term else 0)])
-        if self.constant_term :
-            history = np.append(history, 1)
-        x_new = np.dot(mean, history[0,:])
+        x_history = np.array(
+            history[0, :required_history],
+            dtype=float
+        ).reshape(-1)
+
+        if self.constant_term:
+            x_history = np.append(x_history, 1.0)
+
+        x_new = np.dot(mean, x_history)
         return x_new
+
 
 
 class BivariateARTreeBis() :
@@ -580,7 +599,7 @@ class BivariateARTreeBis() :
 
         ## Gaussian for the AR parameters (p parameter)
         self._mu_0 = np.zeros((self.order, 1))
-        self._Sigma_0 = np.diag(np.ones(self.order) * sigma)
+        self._Sigma_0 = np.diag(np.ones(self.order) * 0.5)
 
         ## Hyperparameters of the tree
         ## Besta must be > 1/2 according to the paper
@@ -758,9 +777,13 @@ class BivariateARTreeBis() :
         self._x.append(x_new)
         self._y.append(y_new)
 
-        if len(self._x) < self.max_depth + 1 or len(self._y) < self.max_depth + 1:
-            return
-        if len(self._x) < self.order + 1 :
+        required_history = self.order - (1 if self.constant_term else 0)
+        required_x_context = sum(1 for q in self.quantizer_seq if q == 0)
+        required_y_context = sum(1 for q in self.quantizer_seq if q == 1)
+        required_x_len = max(required_history, required_x_context) + 1
+        required_y_len = required_y_context + 1
+
+        if len(self._x) < required_x_len or len(self._y) < required_y_len:
             return
         
         context_to_navigate = []
@@ -768,11 +791,11 @@ class BivariateARTreeBis() :
         y_cursor = 0
         for q in self.quantizer_seq :
             if q == 0 :
-                x_cursor -= 1
-                context_to_navigate.append(self.x_quantizer.quantize(self._x[x_cursor]))
+                x_cursor += 1
+                context_to_navigate.append(self.x_quantizer.quantize(self._x[-1 - x_cursor]))
             else :
-                y_cursor -= 1
-                context_to_navigate.append(self.y_quantizer.quantize(self._y[y_cursor]))
+                y_cursor += 1
+                context_to_navigate.append(self.y_quantizer.quantize(self._y[-1 - y_cursor]))
 
         history = self._x[-self.order:-1][::-1] + [1] if self.constant_term else self._x[-self.order-1:-1][::-1]
         self._update_tree(self.tree.root, x_new, history, context_to_navigate, 0)
