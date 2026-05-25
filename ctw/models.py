@@ -276,11 +276,12 @@ class LiveARTree() :
             depth += 1
         ## Use the ar parameters stored in the node to make prediction
         mean = node.data['ms'].reshape(-1)
+        identifier = hash(tuple(node.context))
         history = np.array(history[:self.order - (1 if self.constant_term else 0)]).reshape(-1)
         if self.constant_term :
             history = np.append(history, 1)
         x_new = np.dot(mean, history.reshape(self.order))
-        return x_new
+        return x_new, identifier
     
 
 
@@ -786,4 +787,4 @@ class BivariateARTreeBis() :
         if self.constant_term :
             history = np.append(history, 1)
         x_new = np.dot(mean, history)
-        return x_new
+        return x_new, hash(tuple(node.context))
