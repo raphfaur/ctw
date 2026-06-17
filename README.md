@@ -117,6 +117,11 @@ prediction, node_id = model.predict(np.array([[x1, x2], [y1, y2]]))
 
 `utils.py` provides AR fitting, prediction, regime detection, and plotting helpers for time series evaluation.
 
+## Branch comparison
+
+- `main`: Contains the baseline univariate Context Tree Weighting autoregressive implementation. It focuses on single-series online AR modeling with `LiveARTree` and the univariate tree builder.
+- `bivariate_bis`: Extends the repository with explicit bivariate support, including `BivariateARTree`, `BivariateARTreeBis`, `BivariateQuantizer`, and new tree-building logic for mixed x/y contexts. This branch is used for paired-series experiments and multivariate regime modeling.
+
 ## Repository structure
 
 - `ctw/`
